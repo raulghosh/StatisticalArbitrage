@@ -26,6 +26,9 @@ import schwab
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from src.config import get_config
 
 

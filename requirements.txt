@@ -1,0 +1,19 @@
+# Core Data Science
+pandas
+numpy
+scipy
+matplotlib
+statsmodels
+
+# Configuration & Validation
+pydantic
+pydantic-settings
+python-dotenv
+
+# API Integrations
+schwab-py
+alpaca-py
+
+# Utilities
+loguru
+tenacity
