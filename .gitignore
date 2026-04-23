@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Secrets & Config
+.env
+.schwab_token.json
+
+# Data & Logs
+data/raw/
+data/cache/
+logs/
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
