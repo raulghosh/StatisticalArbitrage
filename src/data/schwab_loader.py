@@ -15,7 +15,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,20 +25,12 @@ import schwab
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from dotenv import load_dotenv
-load_dotenv()
-
 from src.config import get_config
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Constants
 # ══════════════════════════════════════════════════════════════════════════════
-
-# Schwab API frequency / period type enums
-PERIOD_TYPE_YEAR   = schwab.client.Client.PriceHistory.PeriodType.YEAR
-FREQ_TYPE_DAILY    = schwab.client.Client.PriceHistory.FrequencyType.DAILY
-FREQ_DAILY         = schwab.client.Client.PriceHistory.Frequency.EVERY_MINUTE  # overridden below
 
 # Column rename map: Schwab JSON → our standard names
 COL_MAP = {
@@ -96,7 +87,6 @@ class SchwabLoader:
             )
 
         if self.token_path.exists():
-            # Token exists → load it (schwab-py auto-refreshes if expired)
             logger.info("Loading existing Schwab token from {}", self.token_path)
             self._client = schwab.auth.client_from_token_file(
                 token_path=str(self.token_path),
@@ -104,7 +94,6 @@ class SchwabLoader:
                 app_secret=app_secret,
             )
         else:
-            # First-time login: opens browser, saves token
             logger.info("No token found — opening browser for OAuth login...")
             self._client = schwab.auth.client_from_login_flow(
                 api_key=app_key,
@@ -131,12 +120,16 @@ class SchwabLoader:
         """
         Raw API call — returns a clean DataFrame.
 
+        FIX: get_price_history_every_day() in newer schwab-py does NOT accept
+        period_type/period kwargs. Use start_datetime/end_datetime instead.
+        The method already sets FrequencyType=DAILY internally.
+
         Parameters
         ----------
         symbol : str
             Schwab futures symbol, e.g. "/GC", "/SI", "/CL", "/BZ"
         years : int
-            Number of years of daily history to pull (max ~20)
+            Number of years of daily history to pull
 
         Returns
         -------
@@ -145,12 +138,22 @@ class SchwabLoader:
         """
         client = self._get_client()
 
-        logger.info("Fetching {} — {} years daily from Schwab API", symbol, years)
+        # ── Date range (timezone-aware) ────────────────────────────────────
+        end_dt   = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=int(years * 365.25))
 
+        logger.info(
+            "Fetching {} | {} → {} | via start/end datetime",
+            symbol,
+            start_dt.date(),
+            end_dt.date(),
+        )
+
+        # ── API call (no period_type — method sets DAILY internally) ───────
         resp = client.get_price_history_every_day(
             symbol=symbol,
-            period_type=schwab.client.Client.PriceHistory.PeriodType.YEAR,
-            period=min(years, 20),   # Schwab max = 20 years for daily
+            start_datetime=start_dt,
+            end_datetime=end_dt,
             need_extended_hours_data=False,
         )
 
@@ -162,23 +165,28 @@ class SchwabLoader:
         data = resp.json()
 
         if "candles" not in data or not data["candles"]:
-            raise ValueError(f"No candles returned for {symbol}. Check symbol name.")
+            raise ValueError(
+                f"No candles returned for {symbol}. "
+                f"Check symbol format — futures require leading slash e.g. '/GC'"
+            )
 
         df = pd.DataFrame(data["candles"])
 
-        # ── Timestamp handling ─────────────────────────────────────────────
-        # Schwab returns epoch milliseconds in "datetime" column
+        # ── Timestamp: Schwab returns epoch milliseconds ───────────────────
         df["datetime"] = pd.to_datetime(df["datetime"], unit="ms", utc=True)
         df = df.set_index("datetime").sort_index()
 
         # ── Rename & select columns ────────────────────────────────────────
         df = df.rename(columns=COL_MAP)[list(COL_MAP.values())]
         df = df.astype({
-            "open": float, "high": float, "low": float,
-            "close": float, "volume": float,
+            "open":   float,
+            "high":   float,
+            "low":    float,
+            "close":  float,
+            "volume": float,
         })
 
-        # ── Basic sanity checks ────────────────────────────────────────────
+        # ── Sanity checks ──────────────────────────────────────────────────
         n_nulls = df.isnull().sum().sum()
         if n_nulls > 0:
             logger.warning("{} has {} null values — forward-filling", symbol, n_nulls)
@@ -186,15 +194,17 @@ class SchwabLoader:
 
         logger.success(
             "Fetched {} | rows={} | {} → {}",
-            symbol, len(df),
-            df.index[0].date(), df.index[-1].date(),
+            symbol,
+            len(df),
+            df.index[0].date(),
+            df.index[-1].date(),
         )
         return df
 
     # ── Cache logic ────────────────────────────────────────────────────────
 
     def _cache_path(self, symbol: str) -> Path:
-        """Parquet file path for a symbol (replace / to avoid dir issues)."""
+        """Parquet file path for a symbol."""
         safe_name = symbol.replace("/", "FUTURES_")
         return self.cfg.data.cache_dir / f"{safe_name}_daily.parquet"
 
@@ -262,7 +272,7 @@ class SchwabLoader:
         force_refresh: bool = False,
     ) -> pd.DataFrame:
         """
-        Fetch both legs of a configured pair, align on common dates.
+        Fetch both legs of a configured pair, aligned on common dates.
 
         Parameters
         ----------
@@ -275,11 +285,13 @@ class SchwabLoader:
         -------
         pd.DataFrame
             DatetimeIndex, columns: [leg1_symbol, leg2_symbol]
-            Only dates where BOTH instruments have data.
+            Only dates where BOTH instruments have data (inner join).
         """
         pair = self.cfg.data.pairs.get(pair_key)
         if pair is None:
-            raise KeyError(f"Unknown pair '{pair_key}'. Available: {list(self.cfg.data.pairs)}")
+            raise KeyError(
+                f"Unknown pair '{pair_key}'. Available: {list(self.cfg.data.pairs)}"
+            )
 
         sym1 = pair["leg1_schwab"]
         sym2 = pair["leg2_schwab"]
@@ -290,20 +302,25 @@ class SchwabLoader:
         # Inner join — only keep dates where BOTH have prices
         combined = pd.concat([df1, df2], axis=1).dropna()
 
-        # Convert to date index (drop time component for daily work)
+        # Normalize to date (drop time for daily work)
         combined.index = combined.index.normalize()
 
         logger.info(
             "Pair '{}' aligned | rows={} | {} → {}",
-            pair_key, len(combined),
-            combined.index[0].date(), combined.index[-1].date(),
+            pair_key,
+            len(combined),
+            combined.index[0].date(),
+            combined.index[-1].date(),
         )
         return combined
 
     def list_cached_symbols(self) -> list[str]:
         """Show what's already in cache."""
         files = list(self.cfg.data.cache_dir.glob("*_daily.parquet"))
-        symbols = [f.stem.replace("FUTURES_", "/").replace("_daily", "") for f in files]
+        symbols = [
+            f.stem.replace("FUTURES_", "/").replace("_daily", "")
+            for f in files
+        ]
         return sorted(symbols)
 
 
@@ -312,12 +329,10 @@ if __name__ == "__main__":
     loader = SchwabLoader()
     print("Cached symbols:", loader.list_cached_symbols())
 
-    # Test a single symbol
     df_gc = loader.get_price_history("/GC", years=5)
-    print(f"\n/GC shape: {df_gc.shape}")
+    print(f"\n/GC shape : {df_gc.shape}")
     print(df_gc.tail(3))
 
-    # Test a pair
     pair_df = loader.get_pair_prices("gold_silver")
     print(f"\nGold/Silver pair shape: {pair_df.shape}")
     print(pair_df.tail(3))
