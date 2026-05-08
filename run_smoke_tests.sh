@@ -1,6 +1,6 @@
 #!/bin/bash
 # run_smoke_tests.sh
-# Run smoke tests for stationarity.py and cointegration.py
+# Run smoke tests for stationarity.py, cointegration.py, signals.py
 # Usage: bash run_smoke_tests.sh
 
 set -e
@@ -17,7 +17,7 @@ fi
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "  SMOKE TEST RUNNER"
-echo "  StatisticalArbitrage — stats module"
+echo "  StatisticalArbitrage — stats + signals modules"
 echo "════════════════════════════════════════════════════════════════"
 
 PASS=0
@@ -40,6 +40,7 @@ run_test() {
 
 run_test "stationarity.py" "src.stats.stationarity"
 run_test "cointegration.py" "src.stats.cointegration"
+run_test "signals.py"       "src.signals"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
