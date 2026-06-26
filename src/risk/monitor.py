@@ -34,7 +34,7 @@ from loguru import logger
 
 from src.config import get_config
 from src.risk.sizer import TradeOrder
-from src.signals.base import SignalAction
+from src.signals import SignalAction
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -504,7 +504,7 @@ class RiskMonitor:
 
 # ── Run as module: python -m src.risk.monitor ─────────────────────────────
 if __name__ == "__main__":
-    from src.signals.base import PositionState, SignalAction, SignalEvent
+    from src.signals import PositionState, SignalAction, SignalEvent
     from src.risk.sizer import PositionSizer, TradeOrder
     from datetime import datetime, timezone
 
@@ -532,6 +532,7 @@ if __name__ == "__main__":
             spread_value    = -50.0,
             half_life_days  = 10.0,
             regime_ok       = True,
+            quality_ok      = True,
             coint_pvalue    = 0.02,
             prev_state      = PositionState.FLAT,
             new_state       = PositionState.LONG if direction == 1 else PositionState.SHORT,

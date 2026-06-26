@@ -17,7 +17,7 @@ fi
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "  SMOKE TEST RUNNER"
-echo "  StatisticalArbitrage — stats + signals modules"
+echo "  StatisticalArbitrage — stats + signals + risk modules"
 echo "════════════════════════════════════════════════════════════════"
 
 PASS=0
@@ -38,9 +38,12 @@ run_test() {
     fi
 }
 
-run_test "stationarity.py" "src.stats.stationarity"
+run_test "stationarity.py"  "src.stats.stationarity"
 run_test "cointegration.py" "src.stats.cointegration"
 run_test "signals.py"       "src.signals"
+run_test "sizer.py"         "src.risk.sizer"
+run_test "monitor.py"       "src.risk.monitor"
+run_test "backtest.py"      "src.backtest"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"
